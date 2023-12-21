@@ -58,7 +58,10 @@ static _GLFWinitconfig _glfwInitHints = {
     .ns = {
         .menubar = true,  // macOS menu bar
         .chdir = true   // macOS bundle chdir
-    }
+    },
+    .wl = {
+        .libdecorMode = true,
+    },
 };
 
 // Terminate the library
@@ -296,6 +299,9 @@ GLFWAPI void glfwInitHint(int hint, int value)
             return;
         case GLFW_COCOA_MENUBAR:
             _glfwInitHints.ns.menubar = value;
+            return;
+        case GLFW_WAYLAND_LIBDECOR:
+            _glfwInitHints.wl.libdecorMode = value;
             return;
     }
 

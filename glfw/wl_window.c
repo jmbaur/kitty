@@ -35,6 +35,7 @@
 #include "wl_client_side_decorations.h"
 #include "../kitty/monotonic.h"
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -458,7 +459,12 @@ static bool createSurface(_GLFWwindow* window,
 
 static void setFullscreen(_GLFWwindow* window, _GLFWmonitor* monitor, bool on)
 {
-    if (window->wl.xdg.toplevel)
+    if (window->wl.libdecor.frame)
+    {
+        libdecor_frame_set_fullscreen(window->wl.libdecor.frame,
+                                      window->monitor->wl.output);
+    }
+    else if (window->wl.xdg.toplevel)
     {
         if (on) {
             xdg_toplevel_set_fullscreen(
@@ -475,6 +481,17 @@ static void setFullscreen(_GLFWwindow* window, _GLFWmonitor* monitor, bool on)
 
 bool
 _glfwPlatformIsFullscreen(_GLFWwindow *window, unsigned int flags UNUSED) {
+    /* if (libdecor_configuration_get_window_state(config, &windowState)) */
+    /* { */
+    /*     fullscreen = (windowState & LIBDECOR_WINDOW_STATE_FULLSCREEN) != 0; */
+    /*     activated = (windowState & LIBDECOR_WINDOW_STATE_ACTIVE) != 0; */
+    /*     maximized = (windowState & LIBDECOR_WINDOW_STATE_MAXIMIZED) != 0; */
+    /* } */
+    /* else */
+    /* { */
+    /*     fullscreen = window->wl.fullscreen; */
+    /* } */
+
     return window->wl.current.toplevel_states & TOPLEVEL_STATE_FULLSCREEN;
 }
 
@@ -651,6 +668,191 @@ setXdgDecorations(_GLFWwindow* window)
     }
 }
 
+
+void libdecorFrameHandleConfigure(struct libdecor_frame* frame,
+                                  struct libdecor_configuration* config,
+                                  void* userData)
+{
+    _GLFWwindow* window = userData;
+    int width, height;
+
+    enum libdecor_window_state windowState;
+    bool fullscreen, activated, maximized;
+
+    fullscreen = _glfwPlatformIsFullscreen(window, 0);
+    if (libdecor_configuration_get_window_state(config, &windowState))
+    {
+        fullscreen = (windowState & LIBDECOR_WINDOW_STATE_FULLSCREEN) != 0;
+        activated = (windowState & LIBDECOR_WINDOW_STATE_ACTIVE) != 0;
+        maximized = (windowState & LIBDECOR_WINDOW_STATE_MAXIMIZED) != 0;
+    }
+    else
+    {
+        fullscreen = window->wl.fullscreen;
+        activated = window->wl.activated;
+        maximized = window->wl.maximized;
+    }
+
+    if (!libdecor_configuration_get_content_size(config, frame, &width, &height))
+    {
+        width = window->wl.width;
+        height = window->wl.height;
+    }
+
+    if (!maximized && !fullscreen)
+    {
+        if (window->numer != GLFW_DONT_CARE && window->denom != GLFW_DONT_CARE)
+        {
+            const float aspectRatio = (float) width / (float) height;
+            const float targetRatio = (float) window->numer / (float) window->denom;
+            if (aspectRatio < targetRatio)
+                height = width / targetRatio;
+            else if (aspectRatio > targetRatio)
+                width = height * targetRatio;
+        }
+    }
+
+    struct libdecor_state* frameState = libdecor_state_new(width, height);
+    libdecor_frame_commit(frame, frameState, config);
+    libdecor_state_free(frameState);
+
+    if (window->wl.activated != activated)
+    {
+        window->wl.activated = activated;
+        if (!window->wl.activated)
+        {
+            if (window->monitor && window->autoIconify)
+                libdecor_frame_set_minimized(window->wl.libdecor.frame);
+        }
+    }
+
+    if (window->wl.maximized != maximized)
+    {
+        window->wl.maximized = maximized;
+        _glfwInputWindowMaximize(window, window->wl.maximized);
+    }
+
+    window->wl.fullscreen = fullscreen;
+
+    bool damaged = false;
+
+    if (!window->wl.visible)
+    {
+        window->wl.visible = true;
+        damaged = true;
+    }
+
+    if (width != window->wl.width || height != window->wl.height)
+    {
+        window->wl.width = width;
+        window->wl.height = height;
+        resizeFramebuffer(window);
+
+        _glfwInputWindowSize(window, width, height);
+        damaged = true;
+    }
+
+    if (damaged)
+        _glfwInputWindowDamage(window);
+    else
+        wl_surface_commit(window->wl.surface);
+}
+
+void libdecorFrameHandleClose(struct libdecor_frame* frame, void* userData)
+{
+    _GLFWwindow* window = userData;
+    _glfwInputWindowCloseRequest(window);
+}
+
+void libdecorFrameHandleCommit(struct libdecor_frame* frame, void* userData)
+{
+    _GLFWwindow* window = userData;
+    wl_surface_commit(window->wl.surface);
+}
+
+void libdecorFrameHandleDismissPopup(struct libdecor_frame* frame,
+                                     const char* seatName,
+                                     void* userData)
+{
+}
+
+static const struct libdecor_frame_interface libdecorFrameInterface =
+{
+    libdecorFrameHandleConfigure,
+    libdecorFrameHandleClose,
+    libdecorFrameHandleCommit,
+    libdecorFrameHandleDismissPopup
+};
+
+/* static bool createLibdecorFrame(_GLFWwindow* window) */
+/* { */
+/*     window->wl.libdecor.frame = libdecor_decorate(_glfw.wl.libdecor.context, */
+/*                                                   window->wl.surface, */
+/*                                                   &libdecorFrameInterface, */
+/*                                                   window); */
+/*     if (!window->wl.libdecor.frame) */
+/*     { */
+/*         _glfwInputError(GLFW_PLATFORM_ERROR, */
+/*                         "Wayland: Failed to create libdecor frame"); */
+/*         return false; */
+/*     } */
+/**/
+/*     if (strlen(window->wl.appId)) */
+/*         libdecor_frame_set_app_id(window->wl.libdecor.frame, window->wl.appId); */
+/**/
+/*     if (strlen(window->wl.title)) */
+/*         libdecor_frame_set_title(window->wl.libdecor.frame, window->wl.title); */
+/**/
+/*     if (window->minwidth != GLFW_DONT_CARE && */
+/*         window->minheight != GLFW_DONT_CARE) */
+/*     { */
+/*         libdecor_frame_set_min_content_size(window->wl.libdecor.frame, */
+/*                                             window->minwidth, */
+/*                                             window->minheight); */
+/*     } */
+/**/
+/*     if (window->maxwidth != GLFW_DONT_CARE && */
+/*         window->maxheight != GLFW_DONT_CARE) */
+/*     { */
+/*         libdecor_frame_set_max_content_size(window->wl.libdecor.frame, */
+/*                                             window->maxwidth, */
+/*                                             window->maxheight); */
+/*     } */
+/**/
+/*     if (!window->resizable) */
+/*     { */
+/*         libdecor_frame_unset_capabilities(window->wl.libdecor.frame, */
+/*                                           LIBDECOR_ACTION_RESIZE); */
+/*     } */
+/**/
+/*     if (window->monitor) */
+/*     { */
+/*         // HACK: Allow libdecor to finish initialization of itself and its */
+/*         //       plugin so it will create the xdg_toplevel for the frame */
+/*         //       This needs to exist when setting the frame to fullscreen */
+/*         while (!libdecor_frame_get_xdg_toplevel(window->wl.libdecor.frame)) */
+/*             _glfwWaitEventsWayland(); */
+/**/
+/*         libdecor_frame_set_fullscreen(window->wl.libdecor.frame, */
+/*                                       window->monitor->wl.output); */
+/*         setIdleInhibitor(window, true); */
+/*     } */
+/*     else */
+/*     { */
+/*         if (window->wl.maximized) */
+/*             libdecor_frame_set_maximized(window->wl.libdecor.frame); */
+/**/
+/*         if (!window->decorated) */
+/*             libdecor_frame_set_visibility(window->wl.libdecor.frame, false); */
+/**/
+/*         setIdleInhibitor(window, false); */
+/*     } */
+/**/
+/*     libdecor_frame_map(window->wl.libdecor.frame); */
+/*     wl_display_roundtrip(_glfw.wl.display); */
+/*     return true; */
+/* } */
+
 static bool
 createXdgSurface(_GLFWwindow* window)
 {
@@ -679,8 +881,12 @@ createXdgSurface(_GLFWwindow* window)
                               &xdgToplevelListener,
                               window);
 
-    if (window->wl.title)
-        xdg_toplevel_set_title(window->wl.xdg.toplevel, window->wl.title);
+    if (window->wl.title) {
+        if (window->wl.libdecor.frame)
+            libdecor_frame_set_title(window->wl.libdecor.frame, window->wl.title);
+        else if (window->wl.xdg.toplevel)
+            xdg_toplevel_set_title(window->wl.xdg.toplevel, window->wl.title);
+    }
 
     if (window->minwidth != GLFW_DONT_CARE && window->minheight != GLFW_DONT_CARE)
         xdg_toplevel_set_min_size(window->wl.xdg.toplevel,
@@ -1122,7 +1328,9 @@ void _glfwPlatformIconifyWindow(_GLFWwindow* window)
 
 void _glfwPlatformRestoreWindow(_GLFWwindow* window)
 {
-    if (window->wl.xdg.toplevel)
+    if (window->wl.libdecor.frame)
+        libdecor_frame_unset_fullscreen(window->wl.libdecor.frame);
+    else if (window->wl.xdg.toplevel)
     {
         if (window->monitor)
             xdg_toplevel_unset_fullscreen(window->wl.xdg.toplevel);
@@ -1131,6 +1339,7 @@ void _glfwPlatformRestoreWindow(_GLFWwindow* window)
         // There is no way to unset minimized, or even to know if we are
         // minimized, so there is nothing to do in this case.
     }
+
     _glfwInputWindowMonitor(window, NULL);
 }
 

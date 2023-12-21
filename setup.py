@@ -164,6 +164,7 @@ class Options:
     startup_notification_library: Optional[str] = os.getenv('KITTY_STARTUP_NOTIFICATION_LIBRARY')
     canberra_library: Optional[str] = os.getenv('KITTY_CANBERRA_LIBRARY')
     fontconfig_library: Optional[str] = os.getenv('KITTY_FONTCONFIG_LIBRARY')
+    # libdecor_library: Optional[str] = os.getenv('KITTY_LIBDECOR_LIBRARY')
 
     # Extras
     compilation_database: CompilationDatabase = CompilationDatabase()
@@ -407,6 +408,7 @@ def init_env(
     startup_notification_library: Optional[str] = None,
     canberra_library: Optional[str] = None,
     fontconfig_library: Optional[str] = None,
+    # libdecor_library: Optional[str] = None,
     extra_logging: Iterable[str] = (),
     extra_include_dirs: Iterable[str] = (),
     ignore_compiler_warnings: bool = False,
@@ -547,7 +549,8 @@ def kitty_env(args: Options) -> Env:
         cppflags.append('-DGL_SILENCE_DEPRECATION')
     else:
         cflags.extend(pkg_config('fontconfig', '--cflags-only-I'))
-        platform_libs = []
+        cflags.extend(pkg_config('libdecor-0', '--cflags-only-I'))
+        platform_libs = pkg_config('libdecor-0', '--libs')
     cflags.extend(pkg_config('harfbuzz', '--cflags-only-I'))
     platform_libs.extend(pkg_config('harfbuzz', '--libs'))
     pylib = get_python_flags(args, cflags)
@@ -1783,6 +1786,12 @@ def option_parser() -> argparse.ArgumentParser:  # {{{
         help='The filename argument passed to dlopen for libfontconfig.'
         ' This can be used to change the name of the loaded library or specify an absolute path.'
     )
+    # p.add_argument(
+    #     '--libdecor-library',
+    #     type=str,
+    #     defalut=Options.libdecor_library,
+    #     help='TODO'
+    # )
     p.add_argument(
         '--disable-link-time-optimization',
         dest='link_time_optimization',
